@@ -48,7 +48,7 @@ int main()
   }
 
   // Use memory
-  for (int i = 0; i < 128; i++>)
+  for (int i = 0; i < 128; i++)
   {
     ((char*) data)[i] = i;
   }
