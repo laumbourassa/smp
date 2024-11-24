@@ -30,37 +30,91 @@
 smp_ptr_t smp_alloc(smp_pool_t* pool, smp_size_t size)
 {
     if (!pool) return NULL;
-    
+
     smp_chunk_t* chunk = pool->head;
-    while (chunk && (!(chunk->available) || (chunk->size < (size + sizeof(smp_chunk_t)))))
+    smp_chunk_t* prev_chunk = NULL;
+
+    while (chunk)
     {
+        // Coalesce adjacent free chunks
+        if (prev_chunk && prev_chunk->available && chunk->available)
+        {
+            prev_chunk->size += chunk->size + sizeof(smp_chunk_t);
+            prev_chunk->next_offset = chunk->next_offset;
+
+            // Move to the next chunk
+            chunk = (chunk->next_offset == 0) ? NULL : (smp_chunk_t*) (pool->memory + prev_chunk->next_offset);
+
+            // Check if the coalesced chunk can now satisfy the allocation
+            if (prev_chunk->size >= (size + sizeof(smp_chunk_t)))
+            {
+                // Use the coalesced chunk for allocation
+                smp_ptr_t ptr = &prev_chunk[1];
+                smp_size_t remaining_size = prev_chunk->size - size;
+
+                prev_chunk->size = size; // Allocate requested size
+                prev_chunk->available = 0; // Mark as allocated
+
+                // Create a new chunk for the remaining space, if any
+                if (remaining_size > sizeof(smp_chunk_t))
+                {
+                    smp_chunk_t* new_chunk = (smp_chunk_t*) ((smp_byte_t*) ptr + size);
+                    new_chunk->size = remaining_size - sizeof(smp_chunk_t);
+                    new_chunk->available = 1; // Mark as free
+                    new_chunk->next_offset = prev_chunk->next_offset;
+
+                    // Link the current chunk to the new chunk
+                    prev_chunk->next_offset = (uint32_t) ((smp_byte_t*) new_chunk - pool->memory);
+                }
+                else
+                {
+                    // No remaining space, unlink from free list
+                    prev_chunk->next_offset = 0;
+                }
+
+                return ptr;
+            }
+
+            // Continue with the updated chunk
+            continue;
+        }
+
+        // Check if the current chunk is suitable for allocation
+        if (chunk->available && chunk->size >= (size + sizeof(smp_chunk_t)))
+        {
+            smp_ptr_t ptr = &chunk[1]; // Pointer to the allocated block
+
+            smp_size_t remaining_size = chunk->size - size;
+            chunk->size = size; // Allocate requested size
+            chunk->available = 0; // Mark as allocated
+
+            // Create a new chunk for remaining space, if any
+            if (remaining_size > sizeof(smp_chunk_t))
+            {
+                smp_chunk_t* new_chunk = (smp_chunk_t*) ((smp_byte_t*) ptr + size);
+                new_chunk->size = remaining_size - sizeof(smp_chunk_t);
+                new_chunk->available = 1; // Mark as free
+                new_chunk->next_offset = chunk->next_offset;
+
+                // Link the current chunk to the new chunk
+                chunk->next_offset = (uint32_t) ((smp_byte_t*) new_chunk - pool->memory);
+            }
+            else
+            {
+                // No remaining space, unlink from free list
+                chunk->next_offset = 0;
+            }
+
+            return ptr;
+        }
+
+        // Move to the next chunk, keeping track of the previous one
+        prev_chunk = chunk;
         chunk = (chunk->next_offset == 0) ? NULL : (smp_chunk_t*)(pool->memory + chunk->next_offset);
     }
-    
-    if (!chunk) return NULL;
-    
-    smp_ptr_t ptr = &chunk[1];
-    
-    smp_size_t s = chunk->size;
-    smp_chunk_t* next = (chunk->next_offset == 0) ? NULL : (smp_chunk_t*)(pool->memory + chunk->next_offset);
-    
-    chunk->size = (s - size) <= sizeof(smp_chunk_t) ? s : size;
-    chunk->available = 0;
-    chunk->next_offset = 0;
-    
-    smp_chunk_t* new_chunk = (smp_chunk_t*) ((smp_byte_t*) ptr + chunk->size);
 
-    // Check if the new chunk fits in the pool
-    if ((s - chunk->size) > sizeof(smp_chunk_t) && 
-        ((smp_byte_t*) new_chunk + sizeof(smp_chunk_t) <= (pool->memory + pool->size)))
-    {
-        new_chunk->size = s - chunk->size - sizeof(smp_chunk_t);
-        new_chunk->available = 1;
-        new_chunk->next_offset = (next == NULL) ? 0 : (uint32_t)((smp_byte_t*)next - pool->memory);
-        chunk->next_offset = (uint32_t)((smp_byte_t*)new_chunk - pool->memory);
-    }
-
-    return ptr;
+    // No suitable block found
+    return NULL;
 }
 
 smp_ptr_t smp_calloc(smp_pool_t* pool, smp_size_t nitems, smp_size_t size)
