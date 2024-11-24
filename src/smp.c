@@ -32,9 +32,9 @@ smp_ptr_t smp_alloc(smp_pool_t* pool, smp_size_t size)
     if (!pool) return NULL;
     
     smp_header_t* header = pool->head;
-    while (header && (!header->available || (header->size < (size + sizeof(smp_header_t)))))
+    while (header && (!(header->available) || (header->size < (size + sizeof(smp_header_t)))))
     {
-        header = header->next;
+        header = (header->next_offset == 0) ? NULL : (smp_header_t*)(pool->memory + header->next_offset);
     }
     
     if (!header) return NULL;
@@ -42,42 +42,24 @@ smp_ptr_t smp_alloc(smp_pool_t* pool, smp_size_t size)
     smp_ptr_t ptr = &header[1];
     
     smp_size_t s = header->size;
-    smp_header_t* next = header->next;
+    smp_header_t* next = (header->next_offset == 0) ? NULL : (smp_header_t*)(pool->memory + header->next_offset);
     
     header->size = (s - size) <= sizeof(smp_header_t) ? s : size;
-    header->available = false;
-    header->next = NULL;
+    header->available = 0;
+    header->next_offset = 0;
     
     smp_header_t* new_header = (smp_header_t*) ((smp_byte_t*) ptr + header->size);
 
     // Check if the new header fits in the pool
-    if (!new_header->size && ((smp_byte_t*) new_header + sizeof(smp_header_t) <= (pool->memory + pool->size)))
+    if ((s - header->size) > sizeof(smp_header_t) && 
+        ((smp_byte_t*) new_header + sizeof(smp_header_t) <= (pool->memory + pool->size)))
     {
         new_header->size = s - header->size - sizeof(smp_header_t);
-        new_header->available = true;
-        new_header->next = next;
+        new_header->available = 1;
+        new_header->next_offset = (next == NULL) ? 0 : (uint32_t)((smp_byte_t*)next - pool->memory);
+        header->next_offset = (uint32_t)((smp_byte_t*)new_header - pool->memory);
     }
-    else
-    {
-        new_header = next;
-    }
-    
-    smp_header_t* prev_header = pool->head;
-    while (prev_header->available && (prev_header->next < new_header))
-    {
-        prev_header = prev_header->next;
-    }
-    
-    if (prev_header == pool->head)
-    {
-        prev_header = new_header;
-        pool->head = new_header;
-    }
-    else
-    {
-        prev_header = new_header;
-    }
-    
+
     return ptr;
 }
 
@@ -94,8 +76,8 @@ void smp_dealloc(smp_pool_t* pool, smp_ptr_t ptr)
     if (!pool || !ptr) return;
     if (ptr < (smp_ptr_t) pool->memory || ptr >= (smp_ptr_t) (pool->memory + pool->size)) return;
     
-    smp_header_t* header =  (smp_header_t*) (ptr - sizeof(smp_header_t));
-    header->available = true;
+    smp_header_t* header = (smp_header_t*) ((smp_byte_t*) ptr - sizeof(smp_header_t));
+    header->available = 1;
     memset(ptr, 0, header->size);
     
     smp_byte_t* chunk_end = (smp_byte_t*) ptr + header->size;
@@ -103,44 +85,26 @@ void smp_dealloc(smp_pool_t* pool, smp_ptr_t ptr)
     
     if (chunk_end >= pool_end)
     {
-        // We're the last chunk in the pool
+        // Last chunk in the pool
         smp_header_t* tail = pool->head;
-        while (tail->next)
+        while (tail->next_offset != 0)
         {
-            tail = tail->next;
+            tail = (smp_header_t*)(pool->memory + tail->next_offset);
         }
         
-        // Coalesce the chunks
         tail->size += header->size + sizeof(smp_header_t);
         memset(header, 0, sizeof(smp_header_t));
     }
-    else if (chunk_end == (smp_byte_t*) pool->head)
-    {
-        // We're the first chunk in the pool and the next chunk is free
-        // Coalesce the chunks
-        header->size += pool->head->size + sizeof(smp_header_t);
-        header->next = pool->head->next;
-        memset(pool->head, 0, sizeof(smp_header_t));
-        pool->head = header;
-    }
-    else if ((smp_byte_t*) header < (smp_byte_t*) pool->head)
-    {
-        // We're the first chunk in the pool and the next chunk isn't free
-        header->next = pool->head;
-        pool->head = header;
-    }
     else
     {
-        // Find the previous free chunk
-        smp_header_t* prev_header = pool->head;
-        while (((smp_byte_t*) prev_header->next + prev_header->size + sizeof(smp_header_t)) < (smp_byte_t*) header)
+        smp_header_t* next = (header->next_offset == 0) ? NULL : (smp_header_t*)(pool->memory + header->next_offset);
+        if (next && next->available)
         {
-            prev_header = prev_header->next;
+            // Coalesce with the next free chunk
+            header->size += next->size + sizeof(smp_header_t);
+            header->next_offset = next->next_offset;
+            memset(next, 0, sizeof(smp_header_t));
         }
-        
-        // Coalesce the chunks
-        prev_header->size += header->size + sizeof(smp_header_t);
-        memset(header, 0, sizeof(smp_header_t));
     }
 }
 
@@ -149,7 +113,7 @@ smp_size_t smp_size(smp_pool_t* pool, smp_ptr_t ptr)
     if (!pool || !ptr) return 0;
     if (ptr < (smp_ptr_t) pool->memory || ptr >= (smp_ptr_t) (pool->memory + pool->size)) return 0;
     
-    smp_header_t* header =  (smp_header_t*) (ptr - sizeof(smp_header_t));
+    smp_header_t* header = (smp_header_t*) ((smp_byte_t*) ptr - sizeof(smp_header_t));
     
     return header->size;
 }

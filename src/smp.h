@@ -46,8 +46,8 @@
         .header =                                                           \
         {                                                                   \
             .size = pool_size - sizeof(smp_header_t),                       \
-            .available = true,                                              \
-            .next = NULL                                                    \
+            .available = 1,                                                 \
+            .next_offset = 0                                                \
         }                                                                   \
     };                                                                      \
     smp_pool_t pool_name =                                                  \
@@ -82,9 +82,9 @@ typedef size_t smp_size_t;
 typedef struct smp_header smp_header_t;
 typedef struct smp_header
 {
-    smp_size_t size;
-    bool available;
-    smp_header_t* next;
+    uint32_t size : 31;
+    uint32_t available : 1;
+    uint32_t next_offset;
 } smp_header_t;
 
 typedef struct smp_pool
