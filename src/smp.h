@@ -38,25 +38,25 @@
  * @param pool_size The size of the pool.
  */
 #define SMP_POOL(pool_name, pool_size)                                      \
-    union                                                                   \
+    static union                                                            \
     {                                                                       \
         smp_byte_t raw[pool_size];                                          \
         struct                                                              \
         {                                                                   \
-            smp_chunk_t header;                                            \
-            smp_byte_t padding[pool_size - sizeof(smp_chunk_t)];           \
+            smp_chunk_t header;                                             \
+            smp_byte_t padding[pool_size - sizeof(smp_chunk_t)];            \
         };                                                                  \
     } pool_name##_memory =                                                  \
     {                                                                       \
         .raw = {0},                                                         \
         .header =                                                           \
         {                                                                   \
-            .size = pool_size - sizeof(smp_chunk_t),                       \
+            .size = pool_size - sizeof(smp_chunk_t),                        \
             .available = 1,                                                 \
             .next_offset = 0                                                \
         }                                                                   \
     };                                                                      \
-    smp_pool_t pool_name =                                                  \
+    static smp_pool_t pool_name =                                           \
     {                                                                       \
         .memory = pool_name##_memory.raw,                                   \
         .size = pool_size,                                                  \
@@ -71,15 +71,15 @@
  * @param pool_name The name of the pool.
  */
 #define SMP_API(pool_name)                                                  \
-    void* pool_name##_alloc(size_t size)                                    \
+    static void* pool_name##_alloc(size_t size)                             \
     {                                                                       \
         return smp_alloc(&pool_name, size);                                 \
     }                                                                       \
-    void* pool_name##_calloc(size_t nitems, size_t size)                    \
+    static void* pool_name##_calloc(size_t nitems, size_t size)             \
     {                                                                       \
         return smp_calloc(&pool_name, nitems, size);                        \
     }                                                                       \
-    void pool_name##_dealloc(void* ptr)                                     \
+    static void pool_name##_dealloc(void* ptr)                              \
     {                                                                       \
         return smp_dealloc(&pool_name, ptr);                                \
     }
