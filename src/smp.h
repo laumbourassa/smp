@@ -29,7 +29,6 @@
 
 #include <stdlib.h>
 #include <stdint.h>
-#include <stdbool.h>
 
 /**
  * @brief Creates and initializes a static pool and its memory.
