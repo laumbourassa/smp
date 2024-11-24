@@ -83,7 +83,7 @@ int main()
   Deallocates memory from the pool.
 
 - `smp_size_t smp_size(smp_pool_t* pool, smp_ptr_t ptr)`  
-  Gets the size of allocated memory.
+  Gets the size of the allocated memory.
 
 ## License
 
