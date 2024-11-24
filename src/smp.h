@@ -32,7 +32,7 @@
 #include <stdbool.h>
 
 /**
- * @brief Creates an initializes a static pool and its memory.
+ * @brief Creates and initializes a static pool and its memory.
  * 
  * @param pool_name The name of the pool.
  * @param pool_size The size of the pool.
@@ -85,7 +85,7 @@
     }
 
 /**
- * @brief Creates an initializes a static pool and its memory and generates
+ * @brief Creates and initializes a static pool and its memory and generates
  * an API.
  * 
  * @param pool_name The name of the pool.
