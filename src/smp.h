@@ -42,13 +42,13 @@
         smp_byte_t raw[pool_size];                                          \
         struct                                                              \
         {                                                                   \
-            smp_chunk_t header;                                             \
+            smp_chunk_t chunk;                                             \
             smp_byte_t padding[pool_size - sizeof(smp_chunk_t)];            \
         };                                                                  \
     } pool_name##_memory =                                                  \
     {                                                                       \
         .raw = {0},                                                         \
-        .header =                                                           \
+        .chunk =                                                           \
         {                                                                   \
             .size = pool_size - sizeof(smp_chunk_t),                        \
             .available = 1,                                                 \
@@ -59,7 +59,7 @@
     {                                                                       \
         .memory = pool_name##_memory.raw,                                   \
         .size = pool_size,                                                  \
-        .head = &pool_name##_memory.header                                  \
+        .head = &pool_name##_memory.chunk                                  \
     };
 
 /**
