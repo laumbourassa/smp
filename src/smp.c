@@ -1,5 +1,5 @@
 /*
- * smp.h - Static Memory Pool implementation
+ * smp.c - Static Memory Pool implementation
  * 
  * Copyright (c) 2024 Laurent Mailloux-Bourassa
  * 
