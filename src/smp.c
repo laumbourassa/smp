@@ -1,5 +1,5 @@
 /*
- * smp.h - Static Memory Pool implementation
+ * smp.c - Static Memory Pool implementation
  * 
  * Copyright (c) 2024 Laurent Mailloux-Bourassa
  * 
@@ -27,93 +27,79 @@
 #include <string.h>
 #include "smp.h"
 
+#define SMP_COALESCE_CHUNKS(a, b)                                   \
+    {                                                               \
+        a->size = a->size + b->size + sizeof(smp_chunk_t);          \
+        a->next_offset = SMP_GET_RELATIVE_OFFSET(                   \
+                SMP_GET_CHUNK_FROM_OFFSET(b->next_offset, a), a)    \
+                ?: a->next_offset;                                  \
+            memset(b, 0, sizeof(smp_chunk_t));                      \
+    }
+
+#define SMP_GET_CHUNK_FROM_OFFSET(offset, relative_to)  \
+    ((smp_chunk_t*) ((smp_byte_t*) relative_to + offset)) ?: NULL
+
+#define SMP_GET_RELATIVE_OFFSET(chunk, relative_to)                     \
+    ((uint32_t)(((smp_byte_t*)(chunk) > (smp_byte_t*)(relative_to)) ?   \
+    ((smp_byte_t*)(chunk) - (smp_byte_t*)(relative_to)) : 0))
+
+#define SMP_GET_PTR_FROM_CHUNK(chunk)    \
+    ((smp_byte_t*) chunk + sizeof(smp_chunk_t))
+
+#define SMP_GET_CHUNK_FROM_PTR(ptr) \
+    ((smp_chunk_t*) ((smp_byte_t*) ptr - sizeof(smp_chunk_t)))
+
+#define SMP_VALIDATE_CHUNK(chunk)   \
+    (chunk->magic == SMP_MAGIC)
+
 smp_ptr_t smp_alloc(smp_pool_t* pool, smp_size_t size)
 {
     if (!pool) return NULL;
-
+    
     smp_chunk_t* chunk = pool->head;
-    smp_chunk_t* prev_chunk = NULL;
-
+    smp_chunk_t* prev = NULL;
+    
     while (chunk)
     {
-        // Coalesce adjacent free chunks
-        if (prev_chunk && prev_chunk->available && chunk->available)
+        if (chunk->size < size)
         {
-            prev_chunk->size += chunk->size + sizeof(smp_chunk_t);
-            prev_chunk->next_offset = chunk->next_offset;
-
-            // Move to the next chunk
-            chunk = (chunk->next_offset == 0) ? NULL : (smp_chunk_t*) (pool->memory + prev_chunk->next_offset);
-
-            // Check if the coalesced chunk can now satisfy the allocation
-            if (prev_chunk->size >= (size + sizeof(smp_chunk_t)))
-            {
-                // Use the coalesced chunk for allocation
-                smp_ptr_t ptr = &prev_chunk[1];
-                smp_size_t remaining_size = prev_chunk->size - size;
-
-                prev_chunk->size = size; // Allocate requested size
-                prev_chunk->available = 0; // Mark as allocated
-
-                // Create a new chunk for the remaining space, if any
-                if (remaining_size > sizeof(smp_chunk_t))
-                {
-                    smp_chunk_t* new_chunk = (smp_chunk_t*) ((smp_byte_t*) ptr + size);
-                    new_chunk->size = remaining_size - sizeof(smp_chunk_t);
-                    new_chunk->available = 1; // Mark as free
-                    new_chunk->next_offset = prev_chunk->next_offset;
-
-                    // Link the current chunk to the new chunk
-                    prev_chunk->next_offset = (uint32_t) ((smp_byte_t*) new_chunk - pool->memory);
-                }
-                else
-                {
-                    // No remaining space, unlink from free list
-                    prev_chunk->next_offset = 0;
-                }
-
-                return ptr;
-            }
-
-            // Continue with the updated chunk
+            prev = chunk;
+            chunk = SMP_GET_CHUNK_FROM_OFFSET(chunk->next_offset, chunk);
             continue;
         }
-
-        // Check if the current chunk is suitable for allocation
-        if (chunk->available && chunk->size >= (size + sizeof(smp_chunk_t)))
+        
+        smp_size_t remaining_size = chunk->size - size;
+        smp_chunk_t* new_chunk = NULL;
+        
+        if (remaining_size > sizeof(smp_chunk_t))
         {
-            smp_ptr_t ptr = &chunk[1]; // Pointer to the allocated block
-
-            smp_size_t remaining_size = chunk->size - size;
-            chunk->size = size; // Allocate requested size
-            chunk->available = 0; // Mark as allocated
-
-            // Create a new chunk for remaining space, if any
-            if (remaining_size > sizeof(smp_chunk_t))
-            {
-                smp_chunk_t* new_chunk = (smp_chunk_t*) ((smp_byte_t*) ptr + size);
-                new_chunk->size = remaining_size - sizeof(smp_chunk_t);
-                new_chunk->available = 1; // Mark as free
-                new_chunk->next_offset = chunk->next_offset;
-
-                // Link the current chunk to the new chunk
-                chunk->next_offset = (uint32_t) ((smp_byte_t*) new_chunk - pool->memory);
-            }
-            else
-            {
-                // No remaining space, unlink from free list
-                chunk->next_offset = 0;
-            }
-
-            return ptr;
+            new_chunk = SMP_GET_CHUNK_FROM_OFFSET(size + sizeof(smp_chunk_t), chunk);
+            new_chunk->size = remaining_size - sizeof(smp_chunk_t);
+            new_chunk->available = 1;
+            new_chunk->next_offset = SMP_GET_RELATIVE_OFFSET(SMP_GET_CHUNK_FROM_OFFSET(chunk->next_offset, chunk), new_chunk);
+            new_chunk->magic = SMP_MAGIC;
+            chunk->size = size;
         }
-
-        // Move to the next chunk, keeping track of the previous one
-        prev_chunk = chunk;
-        chunk = (chunk->next_offset == 0) ? NULL : (smp_chunk_t*)(pool->memory + chunk->next_offset);
+        
+        if (prev)
+        {
+            prev->next_offset = SMP_GET_RELATIVE_OFFSET(new_chunk, prev);
+        }
+        else if (new_chunk)
+        {
+            pool->head = new_chunk;
+        }
+        else
+        {
+            pool->head = SMP_GET_CHUNK_FROM_OFFSET(chunk->next_offset, chunk);
+        }
+        
+        chunk->available = 0;
+        chunk->next_offset = 0;
+        
+        return SMP_GET_PTR_FROM_CHUNK(chunk);
     }
-
-    // No suitable block found
+    
     return NULL;
 }
 
@@ -130,35 +116,65 @@ void smp_dealloc(smp_pool_t* pool, smp_ptr_t ptr)
     if (!pool || !ptr) return;
     if (ptr < (smp_ptr_t) pool->memory || ptr >= (smp_ptr_t) (pool->memory + pool->size)) return;
     
-    smp_chunk_t* chunk = (smp_chunk_t*) ((smp_byte_t*) ptr - sizeof(smp_chunk_t));
+    smp_chunk_t* chunk = SMP_GET_CHUNK_FROM_PTR(ptr);
+    
+    if (!SMP_VALIDATE_CHUNK(chunk)) return;
+    
     chunk->available = 1;
     memset(ptr, 0, chunk->size);
     
-    smp_byte_t* chunk_end = (smp_byte_t*) ptr + chunk->size;
-    smp_byte_t* pool_end = pool->memory + pool->size;
-    
-    if (chunk_end >= pool_end)
+    if (!pool->head)
     {
-        // Last chunk in the pool
-        smp_chunk_t* tail = pool->head;
-        while (tail->next_offset != 0)
+        pool->head = chunk;
+        return;
+    }
+    
+    if (chunk < pool->head)
+    {
+        // Check if we can coalesce the current and next chunk
+        if ((smp_chunk_t*) ((smp_byte_t*) &chunk[1] + chunk->size) == pool->head)
         {
-            tail = (smp_chunk_t*)(pool->memory + tail->next_offset);
+            SMP_COALESCE_CHUNKS(chunk, pool->head);
+        }
+        else
+        {
+            chunk->next_offset = SMP_GET_RELATIVE_OFFSET(pool->head, chunk);
         }
         
-        tail->size += chunk->size + sizeof(smp_chunk_t);
-        memset(chunk, 0, sizeof(smp_chunk_t));
+        pool->head = chunk;
+        return;
+    }
+
+    // Find the previous free chunk and make it point to this chunk
+    smp_chunk_t* prev = pool->head;
+    smp_chunk_t* next = NULL;
+    
+    while (prev->next_offset)
+    {
+        next = SMP_GET_CHUNK_FROM_OFFSET(prev->next_offset, prev);
+        
+        if (next > chunk) break;
+        
+        prev = next;
+    }
+    
+    // Check if we can coalesce the previous and current chunk
+    if ((smp_chunk_t*) ((smp_byte_t*) &prev[1] + prev->size) == chunk)
+    {
+        SMP_COALESCE_CHUNKS(prev, chunk);
+        chunk = prev;
+    }
+    
+    if (!next) return;
+    
+    // Check if we can coalesce the current and next chunk
+    if ((smp_chunk_t*) ((smp_byte_t*) &chunk[1] + chunk->size) == next)
+    {
+        SMP_COALESCE_CHUNKS(chunk, next);
     }
     else
     {
-        smp_chunk_t* next = (chunk->next_offset == 0) ? NULL : (smp_chunk_t*)(pool->memory + chunk->next_offset);
-        if (next && next->available)
-        {
-            // Coalesce with the next free chunk
-            chunk->size += next->size + sizeof(smp_chunk_t);
-            chunk->next_offset = next->next_offset;
-            memset(next, 0, sizeof(smp_chunk_t));
-        }
+        chunk->next_offset = SMP_GET_RELATIVE_OFFSET(next, chunk);
     }
 }
 
