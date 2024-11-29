@@ -197,7 +197,9 @@ smp_size_t smp_size(smp_pool_t* pool, smp_ptr_t ptr)
     if (!pool || !ptr) return 0;
     if (ptr < (smp_ptr_t) pool->memory || ptr >= (smp_ptr_t) (pool->memory + pool->size)) return 0;
     
-    smp_chunk_t* chunk = (smp_chunk_t*) ((smp_byte_t*) ptr - sizeof(smp_chunk_t));
+    smp_chunk_t* chunk = SMP_GET_CHUNK_FROM_PTR(ptr);
+
+    if (!SMP_VALIDATE_CHUNK(chunk)) return 0;
     
     return chunk->size;
 }
