@@ -31,7 +31,7 @@
     {                                                               \
         a->size = a->size + b->size + sizeof(smp_chunk_t);          \
         a->next_offset = SMP_GET_RELATIVE_OFFSET(                   \
-                SMP_GET_CHUNK_FROM_OFFSET(b->next_offset, a), a)    \
+                SMP_GET_CHUNK_FROM_OFFSET(b->next_offset, b), a)    \
                 ?: a->next_offset;                                  \
             memset(b, 0, sizeof(smp_chunk_t));                      \
     }
@@ -135,6 +135,11 @@ void smp_dealloc(smp_pool_t* pool, smp_ptr_t ptr)
         if ((smp_chunk_t*) ((smp_byte_t*) &chunk[1] + chunk->size) == pool->head)
         {
             SMP_COALESCE_CHUNKS(chunk, pool->head);
+
+            if (chunk->size == pool->size - sizeof(smp_chunk_t))
+            {
+                chunk->next_offset = 0;
+            }
         }
         else
         {
@@ -171,6 +176,15 @@ void smp_dealloc(smp_pool_t* pool, smp_ptr_t ptr)
     if ((smp_chunk_t*) ((smp_byte_t*) &chunk[1] + chunk->size) == next)
     {
         SMP_COALESCE_CHUNKS(chunk, next);
+
+        if (chunk->size == pool->size - sizeof(smp_chunk_t))
+        {
+            chunk->next_offset = 0;
+        }
+        else if (chunk != prev)
+        {
+            prev->next_offset = SMP_GET_RELATIVE_OFFSET(chunk, prev);
+        }
     }
     else
     {
