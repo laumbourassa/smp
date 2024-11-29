@@ -30,9 +30,9 @@
 #define SMP_COALESCE_CHUNKS(a, b)                                   \
     {                                                               \
         a->size = a->size + b->size + sizeof(smp_chunk_t);          \
-        a->next_offset = SMP_GET_RELATIVE_OFFSET(                   \
-                SMP_GET_CHUNK_FROM_OFFSET(b->next_offset, b), a)    \
-                ?: a->next_offset;                                  \
+        a->offset = SMP_GET_RELATIVE_OFFSET(                        \
+                SMP_GET_CHUNK_FROM_OFFSET(b->offset, b), a)         \
+                ?: a->offset;                                       \
             memset(b, 0, sizeof(smp_chunk_t));                      \
     }
 
@@ -64,7 +64,7 @@ smp_ptr_t smp_alloc(smp_pool_t* pool, smp_size_t size)
         if (chunk->size < size)
         {
             prev = chunk;
-            chunk = SMP_GET_CHUNK_FROM_OFFSET(chunk->next_offset, chunk);
+            chunk = SMP_GET_CHUNK_FROM_OFFSET(chunk->offset, chunk);
             continue;
         }
         
@@ -75,15 +75,15 @@ smp_ptr_t smp_alloc(smp_pool_t* pool, smp_size_t size)
         {
             new_chunk = SMP_GET_CHUNK_FROM_OFFSET(size + sizeof(smp_chunk_t), chunk);
             new_chunk->size = remaining_size - sizeof(smp_chunk_t);
-            new_chunk->available = 1;
-            new_chunk->next_offset = SMP_GET_RELATIVE_OFFSET(SMP_GET_CHUNK_FROM_OFFSET(chunk->next_offset, chunk), new_chunk);
+            new_chunk->free = 1;
+            new_chunk->offset = SMP_GET_RELATIVE_OFFSET(SMP_GET_CHUNK_FROM_OFFSET(chunk->offset, chunk), new_chunk);
             new_chunk->magic = SMP_MAGIC;
             chunk->size = size;
         }
         
         if (prev)
         {
-            prev->next_offset = SMP_GET_RELATIVE_OFFSET(new_chunk, prev);
+            prev->offset = SMP_GET_RELATIVE_OFFSET(new_chunk, prev);
         }
         else if (new_chunk)
         {
@@ -91,11 +91,11 @@ smp_ptr_t smp_alloc(smp_pool_t* pool, smp_size_t size)
         }
         else
         {
-            pool->head = SMP_GET_CHUNK_FROM_OFFSET(chunk->next_offset, chunk);
+            pool->head = SMP_GET_CHUNK_FROM_OFFSET(chunk->offset, chunk);
         }
         
-        chunk->available = 0;
-        chunk->next_offset = 0;
+        chunk->free = 0;
+        chunk->offset = 0;
         
         return SMP_GET_PTR_FROM_CHUNK(chunk);
     }
@@ -120,7 +120,7 @@ void smp_dealloc(smp_pool_t* pool, smp_ptr_t ptr)
     
     if (!SMP_VALIDATE_CHUNK(chunk)) return;
     
-    chunk->available = 1;
+    chunk->free = 1;
     memset(ptr, 0, chunk->size);
     
     if (!pool->head)
@@ -138,12 +138,12 @@ void smp_dealloc(smp_pool_t* pool, smp_ptr_t ptr)
 
             if (chunk->size == pool->size - sizeof(smp_chunk_t))
             {
-                chunk->next_offset = 0;
+                chunk->offset = 0;
             }
         }
         else
         {
-            chunk->next_offset = SMP_GET_RELATIVE_OFFSET(pool->head, chunk);
+            chunk->offset = SMP_GET_RELATIVE_OFFSET(pool->head, chunk);
         }
         
         pool->head = chunk;
@@ -154,9 +154,9 @@ void smp_dealloc(smp_pool_t* pool, smp_ptr_t ptr)
     smp_chunk_t* prev = pool->head;
     smp_chunk_t* next = NULL;
     
-    while (prev->next_offset)
+    while (prev->offset)
     {
-        next = SMP_GET_CHUNK_FROM_OFFSET(prev->next_offset, prev);
+        next = SMP_GET_CHUNK_FROM_OFFSET(prev->offset, prev);
         
         if (next > chunk) break;
         
@@ -179,16 +179,16 @@ void smp_dealloc(smp_pool_t* pool, smp_ptr_t ptr)
 
         if (chunk->size == pool->size - sizeof(smp_chunk_t))
         {
-            chunk->next_offset = 0;
+            chunk->offset = 0;
         }
         else if (chunk != prev)
         {
-            prev->next_offset = SMP_GET_RELATIVE_OFFSET(chunk, prev);
+            prev->offset = SMP_GET_RELATIVE_OFFSET(chunk, prev);
         }
     }
     else
     {
-        chunk->next_offset = SMP_GET_RELATIVE_OFFSET(next, chunk);
+        chunk->offset = SMP_GET_RELATIVE_OFFSET(next, chunk);
     }
 }
 

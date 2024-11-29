@@ -50,10 +50,10 @@
         .raw = {0},                                                         \
         .chunk =                                                            \
         {                                                                   \
+            .magic = SMP_MAGIC,                                             \
             .size = pool_size - sizeof(smp_chunk_t),                        \
-            .available = 1,                                                 \
-            .next_offset = 0,                                               \
-            .magic = SMP_MAGIC                                              \
+            .free = 1,                                                      \
+            .offset = 0                                                     \
         }                                                                   \
     };                                                                      \
     static smp_pool_t pool_name =                                           \
@@ -95,7 +95,7 @@
     SMP_POOL(pool_name, pool_size)                                          \
     SMP_API(pool_name)
 
-#define SMP_MAGIC   (0xDECAFBAD)
+#define SMP_MAGIC   0xDECAFBAD
 
 typedef uint8_t smp_byte_t;
 typedef void* smp_ptr_t;
@@ -106,10 +106,10 @@ typedef size_t smp_size_t;
 typedef struct smp_chunk smp_chunk_t;
 typedef struct smp_chunk
 {
-    uint32_t size : 31;
-    uint32_t available : 1;
-    uint32_t next_offset;
     uint32_t magic;
+    uint32_t size : 31;
+    uint32_t free : 1;
+    uint32_t offset;
 } smp_chunk_t;
 
 // Structure holding the pool metadata
