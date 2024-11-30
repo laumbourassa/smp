@@ -6,7 +6,7 @@ The **Static Memory Pool (SMP)** library provides a memory allocation system for
 
 ## Features
 - **Pre-Allocated Pools:** Pools are fixed in size and allocated at compilation, making its usage safe for applications where memory is constrained.
-- **Chunk Coalescing:** Attempts to coalesce neighboring deallocated chunks for efficient memory reusage.
+- **Block Coalescing:** Attempts to coalesce neighboring deallocated blocks for efficient memory reusage.
 - **Common Operations:** Supports allocation, contiguous allocation and deallocation.
 
 ## Getting Started
