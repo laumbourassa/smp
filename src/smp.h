@@ -42,16 +42,16 @@
         smp_byte_t raw[pool_size];                                          \
         struct                                                              \
         {                                                                   \
-            smp_chunk_t chunk;                                              \
-            smp_byte_t padding[pool_size - sizeof(smp_chunk_t)];            \
+            smp_block_t block;                                              \
+            smp_byte_t padding[pool_size - sizeof(smp_block_t)];            \
         };                                                                  \
     } pool_name##_memory =                                                  \
     {                                                                       \
         .raw = {0},                                                         \
-        .chunk =                                                            \
+        .block =                                                            \
         {                                                                   \
             .magic = SMP_MAGIC,                                             \
-            .size = pool_size - sizeof(smp_chunk_t),                        \
+            .size = pool_size - sizeof(smp_block_t),                        \
             .free = 1,                                                      \
             .offset = 0                                                     \
         }                                                                   \
@@ -60,13 +60,13 @@
     {                                                                       \
         .memory = pool_name##_memory.raw,                                   \
         .size = pool_size,                                                  \
-        .head = &pool_name##_memory.chunk                                   \
+        .head = &pool_name##_memory.block                                   \
     };
 
 /**
  * @brief Generates an API for the pool.
  * Generated functions include alloc, calloc and dealloc.
- * SMP_POOL() should be called before.
+ * SMP_POOL should be called before.
  * 
  * @param pool_name The name of the pool.
  */
@@ -101,23 +101,23 @@ typedef uint8_t smp_byte_t;
 typedef void* smp_ptr_t;
 typedef size_t smp_size_t;
 
-// Structure holding the chunk metadata
-// This structure is inside the memory pool for every individual chunk
-typedef struct smp_chunk smp_chunk_t;
-typedef struct smp_chunk
+// Structure holding the block metadata
+// This structure is inside the memory pool for every individual block
+typedef struct smp_block smp_block_t;
+typedef struct smp_block
 {
     uint32_t magic;
     uint32_t size : 31;
     uint32_t free : 1;
     uint32_t offset;
-} smp_chunk_t;
+} smp_block_t;
 
 // Structure holding the pool metadata
 typedef struct smp_pool
 {
     smp_byte_t* memory;
     smp_size_t size;
-    smp_chunk_t* head; // Pointer to the first free chunk
+    smp_block_t* head; // Pointer to the first free block
 } smp_pool_t;
 
 /**

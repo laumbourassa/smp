@@ -25,79 +25,64 @@
  */
 
 #include <string.h>
+#include <stdbool.h>
 #include "smp.h"
 
-#define SMP_COALESCE_CHUNKS(a, b)                                   \
-    {                                                               \
-        a->size = a->size + b->size + sizeof(smp_chunk_t);          \
-        a->offset = SMP_GET_RELATIVE_OFFSET(                        \
-                SMP_GET_CHUNK_FROM_OFFSET(b->offset, b), a)         \
-                ?: a->offset;                                       \
-            memset(b, 0, sizeof(smp_chunk_t));                      \
-    }
+#define SMP_FORCE_INLINE    inline __attribute__((always_inline))
 
-#define SMP_GET_CHUNK_FROM_OFFSET(offset, relative_to)  \
-    ((smp_chunk_t*) ((smp_byte_t*) relative_to + offset)) ?: NULL
-
-#define SMP_GET_RELATIVE_OFFSET(chunk, relative_to)                     \
-    ((uint32_t)(((smp_byte_t*)(chunk) > (smp_byte_t*)(relative_to)) ?   \
-    ((smp_byte_t*)(chunk) - (smp_byte_t*)(relative_to)) : 0))
-
-#define SMP_GET_PTR_FROM_CHUNK(chunk)    \
-    ((smp_byte_t*) chunk + sizeof(smp_chunk_t))
-
-#define SMP_GET_CHUNK_FROM_PTR(ptr) \
-    ((smp_chunk_t*) ((smp_byte_t*) ptr - sizeof(smp_chunk_t)))
-
-#define SMP_VALIDATE_CHUNK(chunk)   \
-    (chunk->magic == SMP_MAGIC)
+static SMP_FORCE_INLINE void _smp_coalesce_blocks(smp_block_t* a, smp_block_t* b);
+static SMP_FORCE_INLINE smp_block_t* _smp_get_block_from_offset(uint32_t offset, smp_block_t* relative_to);
+static SMP_FORCE_INLINE uint32_t _smp_get_relative_offset(smp_block_t* block, smp_block_t* relative_to);
+static SMP_FORCE_INLINE smp_byte_t* _smp_get_ptr_from_block(smp_block_t* block);
+static SMP_FORCE_INLINE smp_block_t* _smp_get_block_from_ptr(smp_byte_t* ptr);
+static SMP_FORCE_INLINE bool _smp_validate_block(smp_block_t* block);
 
 smp_ptr_t smp_alloc(smp_pool_t* pool, smp_size_t size)
 {
     if (!pool) return NULL;
     
-    smp_chunk_t* chunk = pool->head;
-    smp_chunk_t* prev = NULL;
+    smp_block_t* block = pool->head;
+    smp_block_t* prev = NULL;
     
-    while (chunk)
+    while (block)
     {
-        if (chunk->size < size)
+        if (block->size < size)
         {
-            prev = chunk;
-            chunk = SMP_GET_CHUNK_FROM_OFFSET(chunk->offset, chunk);
+            prev = block;
+            block = _smp_get_block_from_offset(block->offset, block);
             continue;
         }
         
-        smp_size_t remaining_size = chunk->size - size;
-        smp_chunk_t* new_chunk = NULL;
+        smp_size_t remaining_size = block->size - size;
+        smp_block_t* new = NULL;
         
-        if (remaining_size > sizeof(smp_chunk_t))
+        if (remaining_size > sizeof(smp_block_t))
         {
-            new_chunk = SMP_GET_CHUNK_FROM_OFFSET(size + sizeof(smp_chunk_t), chunk);
-            new_chunk->size = remaining_size - sizeof(smp_chunk_t);
-            new_chunk->free = 1;
-            new_chunk->offset = SMP_GET_RELATIVE_OFFSET(SMP_GET_CHUNK_FROM_OFFSET(chunk->offset, chunk), new_chunk);
-            new_chunk->magic = SMP_MAGIC;
-            chunk->size = size;
+            new = _smp_get_block_from_offset(size + sizeof(smp_block_t), block);
+            new->magic = SMP_MAGIC;
+            new->size = remaining_size - sizeof(smp_block_t);
+            new->free = 1;
+            new->offset = _smp_get_relative_offset(_smp_get_block_from_offset(block->offset, block), new);
+            block->size = size;
         }
         
         if (prev)
         {
-            prev->offset = SMP_GET_RELATIVE_OFFSET(new_chunk, prev);
+            prev->offset = _smp_get_relative_offset(new, prev);
         }
-        else if (new_chunk)
+        else if (new)
         {
-            pool->head = new_chunk;
+            pool->head = new;
         }
         else
         {
-            pool->head = SMP_GET_CHUNK_FROM_OFFSET(chunk->offset, chunk);
+            pool->head = _smp_get_block_from_offset(block->offset, block);
         }
         
-        chunk->free = 0;
-        chunk->offset = 0;
+        block->free = 0;
+        block->offset = 0;
         
-        return SMP_GET_PTR_FROM_CHUNK(chunk);
+        return _smp_get_ptr_from_block(block);
     }
     
     return NULL;
@@ -116,79 +101,79 @@ void smp_dealloc(smp_pool_t* pool, smp_ptr_t ptr)
     if (!pool || !ptr) return;
     if (ptr < (smp_ptr_t) pool->memory || ptr >= (smp_ptr_t) (pool->memory + pool->size)) return;
     
-    smp_chunk_t* chunk = SMP_GET_CHUNK_FROM_PTR(ptr);
+    smp_block_t* block = _smp_get_block_from_ptr(ptr);
     
-    if (!SMP_VALIDATE_CHUNK(chunk)) return;
+    if (!_smp_validate_block(block)) return;
     
-    chunk->free = 1;
-    memset(ptr, 0, chunk->size);
+    block->free = 1;
+    memset(ptr, 0, block->size);
     
     if (!pool->head)
     {
-        pool->head = chunk;
+        pool->head = block;
         return;
     }
     
-    if (chunk < pool->head)
+    if (block < pool->head)
     {
-        // Check if we can coalesce the current and next chunk
-        if ((smp_chunk_t*) ((smp_byte_t*) &chunk[1] + chunk->size) == pool->head)
+        // Check if we can coalesce the current and next block
+        if ((smp_block_t*) ((smp_byte_t*) &block[1] + block->size) == pool->head)
         {
-            SMP_COALESCE_CHUNKS(chunk, pool->head);
+            _smp_coalesce_blocks(block, pool->head);
 
-            if (chunk->size == pool->size - sizeof(smp_chunk_t))
+            if (block->size == pool->size - sizeof(smp_block_t))
             {
-                chunk->offset = 0;
+                block->offset = 0;
             }
         }
         else
         {
-            chunk->offset = SMP_GET_RELATIVE_OFFSET(pool->head, chunk);
+            block->offset = _smp_get_relative_offset(pool->head, block);
         }
         
-        pool->head = chunk;
+        pool->head = block;
         return;
     }
 
-    // Find the previous free chunk and make it point to this chunk
-    smp_chunk_t* prev = pool->head;
-    smp_chunk_t* next = NULL;
+    // Find the previous free block and make it point to this block
+    smp_block_t* prev = pool->head;
+    smp_block_t* next = NULL;
     
     while (prev->offset)
     {
-        next = SMP_GET_CHUNK_FROM_OFFSET(prev->offset, prev);
+        next = _smp_get_block_from_offset(prev->offset, prev);
         
-        if (next > chunk) break;
+        if (next > block) break;
         
         prev = next;
     }
     
-    // Check if we can coalesce the previous and current chunk
-    if ((smp_chunk_t*) ((smp_byte_t*) &prev[1] + prev->size) == chunk)
+    // Check if we can coalesce the previous and current block
+    if ((smp_block_t*) ((smp_byte_t*) &prev[1] + prev->size) == block)
     {
-        SMP_COALESCE_CHUNKS(prev, chunk);
-        chunk = prev;
+        _smp_coalesce_blocks(prev, block);
+        block = prev;
     }
     
     if (!next) return;
     
-    // Check if we can coalesce the current and next chunk
-    if ((smp_chunk_t*) ((smp_byte_t*) &chunk[1] + chunk->size) == next)
+    // Check if we can coalesce the current and next block
+    if ((smp_block_t*) ((smp_byte_t*) &block[1] + block->size) == next)
     {
-        SMP_COALESCE_CHUNKS(chunk, next);
+        _smp_coalesce_blocks(block, next);
 
-        if (chunk->size == pool->size - sizeof(smp_chunk_t))
+        if (block->size == pool->size - sizeof(smp_block_t))
         {
-            chunk->offset = 0;
+            block->offset = 0;
         }
-        else if (chunk != prev)
+        else if (block != prev)
         {
-            prev->offset = SMP_GET_RELATIVE_OFFSET(chunk, prev);
+            prev->offset = _smp_get_relative_offset(block, prev);
         }
     }
     else
     {
-        chunk->offset = SMP_GET_RELATIVE_OFFSET(next, chunk);
+        block->offset = _smp_get_relative_offset(next, block);
     }
 }
 
@@ -197,9 +182,44 @@ smp_size_t smp_size(smp_pool_t* pool, smp_ptr_t ptr)
     if (!pool || !ptr) return 0;
     if (ptr < (smp_ptr_t) pool->memory || ptr >= (smp_ptr_t) (pool->memory + pool->size)) return 0;
     
-    smp_chunk_t* chunk = SMP_GET_CHUNK_FROM_PTR(ptr);
+    smp_block_t* block = _smp_get_block_from_ptr(ptr);
 
-    if (!SMP_VALIDATE_CHUNK(chunk)) return 0;
+    if (!_smp_validate_block(block)) return 0;
     
-    return chunk->size;
+    return block->size;
+}
+
+static SMP_FORCE_INLINE void _smp_coalesce_blocks(smp_block_t* a, smp_block_t* b)
+{
+    a->size = a->size + b->size + sizeof(smp_block_t);
+    a->offset = _smp_get_relative_offset(_smp_get_block_from_offset(b->offset, b), a) ?: a->offset;
+    memset(b, 0, sizeof(smp_block_t));  
+}
+
+static SMP_FORCE_INLINE smp_block_t* _smp_get_block_from_offset(uint32_t offset, smp_block_t* relative_to)
+{
+    return (smp_block_t*) ((smp_byte_t*) relative_to + offset ?: NULL);
+}
+
+static SMP_FORCE_INLINE uint32_t _smp_get_relative_offset(smp_block_t* block, smp_block_t* relative_to)
+{
+    smp_byte_t* a = (smp_byte_t*) block;
+    smp_byte_t* b = (smp_byte_t*) relative_to;
+
+    return a > b ? a - b : 0;
+}
+
+static SMP_FORCE_INLINE smp_byte_t* _smp_get_ptr_from_block(smp_block_t* block)
+{
+    return (smp_byte_t*) block + sizeof(smp_block_t);
+}
+
+static SMP_FORCE_INLINE smp_block_t* _smp_get_block_from_ptr(smp_byte_t* ptr)
+{
+    return (smp_block_t*) ((smp_byte_t*) ptr - sizeof(smp_block_t));
+}
+
+static SMP_FORCE_INLINE bool _smp_validate_block(smp_block_t* block)
+{
+    return block->magic == SMP_MAGIC;
 }
