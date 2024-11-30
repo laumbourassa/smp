@@ -103,7 +103,6 @@ typedef size_t smp_size_t;
 
 // Structure holding the block metadata
 // This structure is inside the memory pool for every individual block
-typedef struct smp_block smp_block_t;
 typedef struct smp_block
 {
     uint32_t magic;
